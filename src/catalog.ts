@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 export type Kind = "shell" | "exec" | "herdr";
@@ -69,7 +69,9 @@ export function saveCatalog(path: string, scripts: Script[]): void {
       return record;
     }),
   };
-  writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(body, null, 2)}\n`);
+  renameSync(tmp, path);
 }
 
 export function scriptFromAdd(input: {
@@ -132,6 +134,24 @@ export function removeScriptAt(scripts: Script[], index: number): Script[] {
     return scripts;
   }
   return scripts.filter((_, i) => i !== index);
+}
+
+export function scriptsEqual(left: Script, right: Script): boolean {
+  return (
+    left.name === right.name &&
+    left.kind === right.kind &&
+    left.cwd === right.cwd &&
+    JSON.stringify(left.run) === JSON.stringify(right.run) &&
+    JSON.stringify(left.when ?? []) === JSON.stringify(right.when ?? [])
+  );
+}
+
+export function indexOfScript(scripts: Script[], target: Script, preferred = -1): number {
+  const atPreferred = scripts[preferred];
+  if (atPreferred && scriptsEqual(atPreferred, target)) {
+    return preferred;
+  }
+  return scripts.findIndex((script) => scriptsEqual(script, target));
 }
 
 function isNotFound(error: unknown): boolean {

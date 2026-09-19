@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  indexOfScript,
   loadCatalog,
   removeScriptAt,
   replaceScriptAt,
@@ -130,4 +131,14 @@ test("replace and remove target a Catalog index so duplicate Names stay distinct
     scripts[2],
   ]);
   assert.deepEqual(removeScriptAt(scripts, 9), scripts);
+});
+
+test("indexOfScript prefers the original Catalog index and falls back to a match", () => {
+  const scripts = [
+    { name: "Dev", kind: "shell" as const, run: "pnpm dev" },
+    { name: "Dev", kind: "shell" as const, run: "pnpm start" },
+  ];
+  assert.equal(indexOfScript(scripts, scripts[1]!, 1), 1);
+  assert.equal(indexOfScript(scripts, scripts[1]!, 0), 1);
+  assert.equal(indexOfScript(scripts, { name: "Gone", kind: "shell", run: "x" }, 0), -1);
 });

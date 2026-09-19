@@ -1,3 +1,8 @@
+const CSI_FINAL_MIN = 0x40;
+const CSI_FINAL_MAX = 0x7e;
+const CSI_PARAM_MIN = 0x20;
+const CSI_PARAM_MAX = 0x3f;
+
 export function consumeKey(buffer: string): { key: string | null; rest: string; pending: boolean } {
   if (buffer.length === 0) {
     return { key: null, rest: "", pending: false };
@@ -29,23 +34,7 @@ export function consumeKey(buffer: string): { key: string | null; rest: string; 
     return { key: char, rest: buffer.slice(1), pending: false };
   }
 
-  if (buffer.startsWith("\u001b[A") || buffer.startsWith("\u001bOA")) {
-    return { key: "up", rest: buffer.slice(3), pending: false };
-  }
-  if (buffer.startsWith("\u001b[B") || buffer.startsWith("\u001bOB")) {
-    return { key: "down", rest: buffer.slice(3), pending: false };
-  }
-  if (buffer.startsWith("\u001b[C") || buffer.startsWith("\u001bOC")) {
-    return { key: "right", rest: buffer.slice(3), pending: false };
-  }
-  if (buffer.startsWith("\u001b[D") || buffer.startsWith("\u001bOD")) {
-    return { key: "left", rest: buffer.slice(3), pending: false };
-  }
-  if (buffer.startsWith("\u001b[3~")) {
-    return { key: "delete", rest: buffer.slice(4), pending: false };
-  }
-
-  if (buffer === "\u001b" || buffer === "\u001b[" || buffer === "\u001bO" || buffer === "\u001b[3") {
+  if (buffer === "\u001b") {
     return { key: null, rest: buffer, pending: true };
   }
 
@@ -53,7 +42,18 @@ export function consumeKey(buffer: string): { key: string | null; rest: string; 
     return { key: "escape", rest: buffer.slice(2), pending: false };
   }
 
-  return { key: "escape", rest: buffer.slice(1), pending: false };
+  if (buffer[1] === "O") {
+    if (buffer.length < 3) {
+      return { key: null, rest: buffer, pending: true };
+    }
+    return { key: ss3Key(buffer.slice(0, 3)), rest: buffer.slice(3), pending: false };
+  }
+
+  if (buffer[1] === "[") {
+    return consumeCsi(buffer);
+  }
+
+  return { key: "unbound", rest: buffer.slice(2), pending: false };
 }
 
 export function flushPending(buffer: string): { key: string | null; rest: string } {
@@ -61,4 +61,53 @@ export function flushPending(buffer: string): { key: string | null; rest: string
     return { key: "escape", rest: buffer.slice(1) };
   }
   return { key: null, rest: buffer };
+}
+
+function consumeCsi(buffer: string): { key: string | null; rest: string; pending: boolean } {
+  for (let i = 2; i < buffer.length; i++) {
+    const code = buffer.charCodeAt(i);
+    if (code >= CSI_FINAL_MIN && code <= CSI_FINAL_MAX) {
+      const seq = buffer.slice(0, i + 1);
+      return { key: csiKey(seq), rest: buffer.slice(i + 1), pending: false };
+    }
+    if (code < CSI_PARAM_MIN || code > CSI_PARAM_MAX) {
+      return { key: "unbound", rest: buffer.slice(i), pending: false };
+    }
+  }
+  return { key: null, rest: buffer, pending: true };
+}
+
+function ss3Key(seq: string): string {
+  if (seq === "\u001bOA") {
+    return "up";
+  }
+  if (seq === "\u001bOB") {
+    return "down";
+  }
+  if (seq === "\u001bOC") {
+    return "right";
+  }
+  if (seq === "\u001bOD") {
+    return "left";
+  }
+  return "unbound";
+}
+
+function csiKey(seq: string): string {
+  if (seq === "\u001b[A") {
+    return "up";
+  }
+  if (seq === "\u001b[B") {
+    return "down";
+  }
+  if (seq === "\u001b[C") {
+    return "right";
+  }
+  if (seq === "\u001b[D") {
+    return "left";
+  }
+  if (seq === "\u001b[3~") {
+    return "delete";
+  }
+  return "unbound";
 }

@@ -2,12 +2,12 @@
 
 A [Herdr](https://herdr.dev) plugin that runs named Scripts from a popup or a numbered Slot.
 
-Needs Herdr 0.9+ and Node 22+ on macOS or Linux, with `node` on `PATH`.
+Needs Herdr 0.9+ and Node 20+ on macOS or Linux, with `node` and `npm` on `PATH`.
 
 ## Install
 
 ```bash
-herdr plugin install owner/repo
+herdr plugin install Fadi729/herdr-terminal-scripts
 ```
 
 Scripts are stored in the plugin config dir:
@@ -155,4 +155,4 @@ herdr plugin action list --plugin terminal-scripts
 
 **Scoped Script missing.** The active workspace is not that clone or a worktree of it. Check `when.path`.
 
-**Plugin not found.** Run `herdr plugin install owner/repo` again.
+**Plugin not found.** Run `herdr plugin install Fadi729/herdr-terminal-scripts` again.

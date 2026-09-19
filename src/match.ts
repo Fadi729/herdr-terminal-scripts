@@ -59,18 +59,26 @@ export function pathMatches(matcherPath: string, workspaceCwd: string, home: str
   return matcherGit !== null && cwdGit !== null && matcherGit === cwdGit;
 }
 
+const gitCommonDirCache = new Map<string, string | null>();
+
 function gitCommonDir(dir: string): string | null {
+  const cached = gitCommonDirCache.get(dir);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let value: string | null = null;
   try {
     const output = execFileSync("git", ["-C", dir, "rev-parse", "--git-common-dir"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    if (!output) {
-      return null;
+    if (output) {
+      const absolute = resolve(dir, output);
+      value = existsSync(absolute) ? realpathSync(absolute) : absolute;
     }
-    const absolute = resolve(dir, output);
-    return existsSync(absolute) ? realpathSync(absolute) : absolute;
   } catch {
-    return null;
+    value = null;
   }
+  gitCommonDirCache.set(dir, value);
+  return value;
 }

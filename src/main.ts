@@ -1,5 +1,14 @@
 import { stdin as stdinFd } from "node:process";
-import { loadCatalog, removeScriptAt, replaceScriptAt, saveCatalog, scriptFromAdd, scriptFromEdit, type Script } from "./catalog.ts";
+import {
+  indexOfScript,
+  loadCatalog,
+  removeScriptAt,
+  replaceScriptAt,
+  saveCatalog,
+  scriptFromAdd,
+  scriptFromEdit,
+  type Script,
+} from "./catalog.ts";
 import {
   catalogPath,
   herdrBin,
@@ -9,11 +18,18 @@ import {
   readPluginContext,
 } from "./herdr.ts";
 import { consumeKey, flushPending } from "./keys.ts";
-import { planLaunch } from "./launch.ts";
+import { planLaunch, type LaunchPlan } from "./launch.ts";
 import { clonePathForWorkspace, type Workspace } from "./match.ts";
-import { adjacentAddStep, filterVisible, renderAddForm, renderConfirmDelete, renderPicker, type AddStep } from "./picker.ts";
+import { filterVisible, renderAddForm, renderConfirmDelete, renderPicker } from "./picker.ts";
 import { resolvePicker, resolveSlot } from "./resolve.ts";
-import type { VisibleScript } from "./visible.ts";
+import {
+  createSession,
+  handleSessionKey,
+  type Session,
+  type SessionEffect,
+} from "./session.ts";
+
+export type PluginWorkspace = Workspace & { workspaceId: string | null };
 
 async function main(): Promise<void> {
   const entry = process.env.HERDR_PLUGIN_ENTRYPOINT_ID;
@@ -29,41 +45,34 @@ async function main(): Promise<void> {
   }
   const slotMatch = /^run-([1-9])$/.exec(action);
   if (slotMatch) {
-    runSlot(Number(slotMatch[1]));
+    process.exitCode = runSlot(Number(slotMatch[1]));
     return;
   }
   await runPicker();
 }
 
-function workspaceFromEnv(): Workspace & { paneId: string | null; workspaceId: string | null } {
+function workspaceFromEnv(): PluginWorkspace {
   const context = readPluginContext();
   return {
     cwd: context.workspaceCwd ?? "",
     home: process.env.HOME ?? "",
-    paneId: context.focusedPaneId,
     workspaceId: context.workspaceId,
   };
 }
 
-function runSlot(slot: number): void {
+function runSlot(slot: number): number {
   const workspace = workspaceFromEnv();
   if (!workspace.cwd) {
-    notify("Terminal Scripts", "No active workspace.");
-    process.exitCode = 1;
-    return;
+    report("No active workspace.");
+    return 1;
   }
   const catalog = loadCatalog(catalogPath());
   const result = resolveSlot(catalog, workspace, slot, { herdrBin: herdrBin() });
   if (result.status === "notify") {
-    notify(result.title, result.body);
-    return;
+    report(result.body);
+    return 0;
   }
-  try {
-    launchInNewTab(result.plan, workspace.workspaceId);
-  } catch (error) {
-    notify("Terminal Scripts", error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  }
+  return launchPlan(result.plan, workspace.workspaceId);
 }
 
 async function runPicker(): Promise<void> {
@@ -82,295 +91,148 @@ async function runPicker(): Promise<void> {
     return;
   }
 
-  await withRawMode(() => interactivePicker(workspace));
-  // Herdr keeps a popup open until this command exits. stdin stays
-  // readable after raw mode ends, so returning from main is not enough.
-  process.exit(process.exitCode ?? 0);
+  const outcome = await withRawMode(() => interactivePicker(workspace));
+  if (outcome.type === "launch") {
+    process.exit(launchPlan(planLaunch(outcome.script, workspace, { herdrBin: herdrBin() }), workspace.workspaceId));
+  }
+  process.exit(0);
 }
 
 async function interactivePicker(
-  workspace: Workspace & { paneId: string | null; workspaceId: string | null },
-): Promise<void> {
-  let catalog = loadCatalog(catalogPath());
-  let query = "";
-  let selected = 0;
-  let mode: "list" | AddStep = "list";
-  let draftName = "";
-  let draftRun = "";
-  let draftCwd = "";
-  let draftScope: "workspace" | "global" = workspace.cwd ? "workspace" : "global";
-  let editingIndex: number | null = null;
-  let pendingDeleteIndex: number | null = null;
-  let pendingDeleteName = "";
-  let pendingDeleteExtra = "";
-
+  workspace: PluginWorkspace,
+): Promise<{ type: "quit" } | { type: "launch"; script: Script }> {
   const clonePath = workspace.cwd ? clonePathForWorkspace(workspace.cwd) : "";
+  let session = loadSession(workspace);
 
   while (true) {
-    const view = resolvePicker(catalog, workspace);
-    if (view.status === "message") {
-      draw(renderPicker({ title: view.title, body: view.body, query: "", selected: 0 }));
+    if (session === null) {
+      const catalog = loadCatalog(catalogPath());
+      const view = resolvePicker(catalog, workspace);
+      draw(renderPicker({ title: view.title, body: view.status === "message" ? view.body : "", query: "", selected: 0 }));
       const key = await readKey();
       if (key === "escape" || key === "ctrl-c") {
-        return;
+        return { type: "quit" };
       }
       continue;
     }
 
-    if (pendingDeleteIndex !== null) {
-      draw(
-        renderConfirmDelete({
-          name: pendingDeleteName,
-          disambiguator: pendingDeleteExtra || undefined,
-        }),
-      );
-      const key = await readKey();
-      if (key === "ctrl-c") {
-        return;
-      }
-      if (key === "escape") {
-        pendingDeleteIndex = null;
-        continue;
-      }
-      if (key === "enter") {
-        persistDelete(pendingDeleteIndex);
-        catalog = loadCatalog(catalogPath());
-        pendingDeleteIndex = null;
-        selected = 0;
-      }
-      continue;
+    drawSession(session, clonePath);
+    const key = await readKey();
+    const next = handleSessionKey(session, key, { clonePath: clonePath || workspace.cwd });
+    session = next.session;
+    const result = applyEffect(next.effect, workspace);
+    if (result.type === "quit" || result.type === "launch") {
+      return result;
     }
+    if (result.type === "reload") {
+      session = loadSession(workspace) ?? session;
+    }
+  }
+}
 
-    if (mode !== "list") {
-      draw(
-        renderAddForm({
-          intent: editingIndex === null ? "add" : "edit",
-          step: mode,
-          name: draftName,
-          run: draftRun,
-          cwd: draftCwd,
-          scope: draftScope,
-          clonePath,
-        }),
-      );
-      const key = await readKey();
-      if (key === "ctrl-c") {
-        return;
-      }
-      if (key === "escape") {
-        mode = "list";
-        editingIndex = null;
-        continue;
-      }
-      if (key === "up") {
-        mode = adjacentAddStep(mode, -1);
-        continue;
-      }
-      if (key === "down") {
-        mode = adjacentAddStep(mode, 1);
-        continue;
-      }
-      if (mode === "scope" && (key === "left" || key === "right" || key === "g" || key === "w")) {
-        if (key === "g") {
-          draftScope = "global";
-        } else if (key === "w") {
-          draftScope = "workspace";
-        } else {
-          draftScope = draftScope === "global" ? "workspace" : "global";
-        }
-        continue;
-      }
-      if (key === "enter") {
-        if (mode === "name" && draftName.trim()) {
-          mode = "run";
-          continue;
-        }
-        if (mode === "run" && draftRun.trim()) {
-          mode = "cwd";
-          continue;
-        }
-        if (mode === "cwd") {
-          if (!workspace.cwd) {
-            draftScope = "global";
-            persistDraft();
-            catalog = loadCatalog(catalogPath());
-            mode = "list";
-            query = "";
-            selected = 0;
-          } else {
-            mode = "scope";
-          }
-          continue;
-        }
-        if (mode === "scope" && draftName.trim() && draftRun.trim()) {
-          persistDraft();
-          catalog = loadCatalog(catalogPath());
-          mode = "list";
-          query = "";
-          selected = 0;
-        }
-        continue;
-      }
-      if (mode === "name") {
-        draftName = editField(draftName, key);
-      } else if (mode === "run") {
-        draftRun = editField(draftRun, key);
-      } else if (mode === "cwd") {
-        draftCwd = editField(draftCwd, key);
-      }
-      continue;
-    }
+function loadSession(workspace: PluginWorkspace): Session | null {
+  const catalog = loadCatalog(catalogPath());
+  const view = resolvePicker(catalog, workspace);
+  if (view.status === "message") {
+    return null;
+  }
+  return createSession(view.visible, Boolean(workspace.cwd));
+}
 
-    const visible = filterVisible(view.visible, query);
-    const addIndex = visible.length;
-    if (selected > addIndex) {
-      selected = addIndex;
-    }
+function drawSession(session: Session, clonePath: string): void {
+  if (session.mode === "confirm-delete" && session.pendingDelete) {
     draw(
-      renderPicker({
-        title: view.title,
-        visible,
-        query,
-        selected,
+      renderConfirmDelete({
+        name: session.pendingDelete.name,
+        disambiguator: session.pendingDelete.extra || undefined,
       }),
     );
-    const key = await readKey();
-    if (key === "escape" || key === "ctrl-c") {
-      return;
-    }
-    if (key === "+" ) {
-      startAdd();
-      continue;
-    }
-    if (key === "ctrl-e") {
-      const chosen = visible[selected];
-      if (chosen) {
-        startEdit(chosen);
-      }
-      continue;
-    }
-    if (key === "ctrl-d" || key === "delete") {
-      const chosen = visible[selected];
-      if (chosen) {
-        startDelete(chosen);
-      }
-      continue;
-    }
-    if (key === "enter") {
-      if (selected === addIndex) {
-        startAdd();
-        continue;
-      }
-      const chosen = visible[selected];
-      if (chosen) {
-        launchChosen(chosen, workspace);
-        return;
-      }
-      continue;
-    }
-    if (key === "up") {
-      selected = Math.max(0, selected - 1);
-      continue;
-    }
-    if (key === "down") {
-      selected = Math.min(addIndex, selected + 1);
-      continue;
-    }
-    if (/^[1-9]$/.test(key)) {
-      const chosen = visible[Number(key) - 1];
-      if (chosen) {
-        launchChosen(chosen, workspace);
-        return;
-      }
-      continue;
-    }
-    if (key === "backspace") {
-      query = query.slice(0, -1);
-      selected = 0;
-      continue;
-    }
-    if (key.length === 1 && !key.startsWith("\u001b")) {
-      query += key;
-      selected = 0;
-    }
+    return;
   }
-
-  function startAdd(): void {
-    editingIndex = null;
-    mode = "name";
-    draftName = "";
-    draftRun = "";
-    draftCwd = "";
-    draftScope = workspace.cwd ? "workspace" : "global";
+  if (session.mode !== "list" && session.mode !== "confirm-delete") {
+    draw(
+      renderAddForm({
+        intent: session.editingIndex === null ? "add" : "edit",
+        step: session.mode,
+        name: session.draft.name,
+        run: session.draft.run,
+        cwd: session.draft.cwd,
+        scope: session.draft.scope,
+        clonePath,
+      }),
+    );
+    return;
   }
-
-  function startEdit(chosen: VisibleScript): void {
-    editingIndex = chosen.catalogIndex;
-    mode = "name";
-    draftName = chosen.name;
-    draftRun = typeof chosen.run === "string" ? chosen.run : chosen.run.join(" ");
-    draftCwd = chosen.cwd ?? "";
-    draftScope = chosen.when && chosen.when.length > 0 ? "workspace" : "global";
-  }
-
-  function startDelete(chosen: VisibleScript): void {
-    pendingDeleteIndex = chosen.catalogIndex;
-    pendingDeleteName = chosen.name;
-    pendingDeleteExtra = chosen.disambiguator ?? "";
-  }
-
-  function persistDraft(): void {
-    const existing = catalog.status === "ok" ? catalog.scripts : [];
-    const input = {
-      name: draftName,
-      run: draftRun,
-      scope: draftScope,
-      clonePath: clonePath || workspace.cwd,
-      cwd: draftCwd,
-    };
-    const next =
-      editingIndex === null
-        ? [...existing, scriptFromAdd(input)]
-        : replaceScriptAt(
-            existing,
-            editingIndex,
-            scriptFromEdit(existing[editingIndex] ?? scriptFromAdd(input), input),
-          );
-    saveCatalog(catalogPath(), next);
-    editingIndex = null;
-  }
-
-  function persistDelete(index: number): void {
-    const existing = catalog.status === "ok" ? catalog.scripts : [];
-    saveCatalog(catalogPath(), removeScriptAt(existing, index));
-  }
+  const visible = filterVisible(session.visible, session.query);
+  const selected = Math.min(session.selected, visible.length);
+  draw(
+    renderPicker({
+      title: "Terminal Scripts",
+      visible,
+      query: session.query,
+      selected,
+    }),
+  );
 }
 
-function launchChosen(
-  chosen: Script,
-  workspace: Workspace & { paneId: string | null; workspaceId: string | null },
-): void {
-  if (!workspace.cwd) {
-    notify("Terminal Scripts", "No active workspace.");
-    process.exit(1);
+function applyEffect(
+  effect: SessionEffect,
+  workspace: PluginWorkspace,
+): { type: "none" } | { type: "quit" } | { type: "launch"; script: Script } | { type: "reload" } {
+  if (effect.type === "none") {
+    return { type: "none" };
   }
+  if (effect.type === "quit") {
+    return { type: "quit" };
+  }
+  if (effect.type === "launch") {
+    return { type: "launch", script: effect.script };
+  }
+  const path = catalogPath();
+  const live = loadCatalog(path);
+  if (live.status === "invalid") {
+    report(`Catalog is invalid: ${live.message}`);
+    return { type: "none" };
+  }
+  const existing = live.status === "ok" ? live.scripts : [];
+  if (effect.type === "persist-add") {
+    saveCatalog(path, [...existing, scriptFromAdd(effect.draft)]);
+    return { type: "reload" };
+  }
+  if (effect.type === "persist-edit") {
+    const index = indexOfScript(existing, effect.original, effect.index);
+    if (index < 0) {
+      report("Catalog changed. The Script was not saved.");
+      return { type: "reload" };
+    }
+    saveCatalog(path, replaceScriptAt(existing, index, scriptFromEdit(existing[index] ?? scriptFromAdd(effect.draft), effect.draft)));
+    return { type: "reload" };
+  }
+  const index = indexOfScript(existing, effect.original, effect.index);
+  if (index < 0) {
+    report("Catalog changed. The Script was not deleted.");
+    return { type: "reload" };
+  }
+  saveCatalog(path, removeScriptAt(existing, index));
+  return { type: "reload" };
+}
+
+function launchPlan(plan: LaunchPlan, workspaceId: string | null): number {
   try {
-    launchInNewTab(planLaunch(chosen, workspace, { herdrBin: herdrBin() }), workspace.workspaceId);
-    process.exit(0);
+    launchInNewTab(plan, workspaceId);
+    return 0;
   } catch (error) {
-    notify("Terminal Scripts", error instanceof Error ? error.message : String(error));
-    process.exit(1);
+    report(error instanceof Error ? error.message : String(error));
+    return 1;
   }
 }
 
-function editField(value: string, key: string): string {
-  if (key === "backspace") {
-    return value.slice(0, -1);
+function report(body: string): void {
+  try {
+    notify("Terminal Scripts", body);
+  } catch {
+    process.stderr.write(`${body}\n`);
   }
-  if (key.length === 1 && !key.startsWith("\u001b")) {
-    return value + key;
-  }
-  return value;
 }
 
 function draw(text: string): void {
@@ -430,4 +292,9 @@ function readKey(): Promise<string> {
   });
 }
 
-await main();
+try {
+  await main();
+} catch (error) {
+  report(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}

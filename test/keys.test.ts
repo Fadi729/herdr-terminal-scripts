@@ -33,3 +33,23 @@ test("Ctrl+E, Ctrl+D, and Delete are not filter characters", () => {
   assert.equal(pending.key, null);
   assert.equal(pending.pending, true);
 });
+
+test("complete CSI sequences that are not arrows are ignored instead of treated as Escape", () => {
+  const home = consumeKey("\u001b[H");
+  assert.equal(home.key, "unbound");
+  assert.equal(home.rest, "");
+
+  const pageUp = consumeKey("\u001b[5~");
+  assert.equal(pageUp.key, "unbound");
+  assert.equal(pageUp.rest, "");
+
+  const shiftTab = consumeKey("\u001b[Z");
+  assert.equal(shiftTab.key, "unbound");
+  assert.equal(shiftTab.rest, "");
+});
+
+test("an incomplete CSI sequence stays pending", () => {
+  const pending = consumeKey("\u001b[1");
+  assert.equal(pending.key, null);
+  assert.equal(pending.pending, true);
+});

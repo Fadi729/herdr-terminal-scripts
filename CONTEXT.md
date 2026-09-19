@@ -39,3 +39,5 @@ _Avoid_: Hotkey, shortcut, index (those are how you press it, not what it is)
 **Popup**:
 The session-modal Herdr pane used to pick a Visible Script by search, or to add, edit, or delete Scripts in the Catalog. When two Visible Scripts share a Name, the list also shows the Matcher, or that the Script is Global.
 _Avoid_: Popscreen, palette, modal, scripts bar
+
+Herdr launches `node dist/main.js`. `plugin install` runs `npm ci` then `npm run build`. `plugin link` does not; run `npm run build` after TypeScript changes.
