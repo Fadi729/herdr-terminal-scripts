@@ -1,0 +1,16 @@
+{
+  "scripts": [
+    {
+      "name": "Herdr logs",
+      "kind": "herdr",
+      "run": ["plugin", "log", "list"]
+    },
+    {
+      "name": "Dev server",
+      "kind": "shell",
+      "run": "pnpm dev",
+      "when": [{ "path": "~/Projects/app" }],
+      "cwd": "apps/web"
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+# Scoped Scripts match this clone and its worktrees
+
+SuperSet does not filter terminal scripts by git remote. A Project is the local folder you imported (`mainRepoPath`); worktrees share it via `projectId`. A second clone is a second project. We copy that: a Matcher is the absolute path of that clone (or a non-git folder). The workspace matches if its cwd is under that path, or if it is a git worktree of that repository (same git common-dir). Two checkouts of `github.com/you/app` do not share Scripts unless both paths are listed. The plugin still only evaluates declared Matchers; it does not scrape the project.
