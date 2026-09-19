@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import type { Script } from "../src/catalog.ts";
+import { clonePathForWorkspace } from "../src/match.ts";
 import { listVisible, scriptInSlot } from "../src/visible.ts";
 
 const home = "/Users/fadi";
@@ -115,6 +116,10 @@ test("Visible order is Scoped Catalog order, then Global Catalog order", () => {
     visible.map((item) => item.name),
     ["Scoped B", "Scoped D", "Global A", "Global C"],
   );
+  assert.deepEqual(
+    visible.map((item) => item.catalogIndex),
+    [1, 3, 0, 2],
+  );
 });
 
 test("Slots 1 through 9 are the first nine Visible Scripts", () => {
@@ -157,4 +162,12 @@ test("duplicate Names are disambiguated only when both are Visible", () => {
     { cwd: clone, home },
   );
   assert.equal(justGlobalName[0]?.disambiguator, undefined);
+});
+
+test("this-workspace Add uses the clone path, including from a worktree", () => {
+  const root = scratchDir("clone-path-");
+  const { clone, worktree } = initClone(root);
+  assert.equal(clonePathForWorkspace(clone), clone);
+  assert.equal(clonePathForWorkspace(join(clone, "apps")), clone);
+  assert.equal(clonePathForWorkspace(worktree), clone);
 });

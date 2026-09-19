@@ -1,18 +1,35 @@
 import { stdin as stdinFd } from "node:process";
-import { loadCatalog } from "./catalog.ts";
+import {
+  indexOfScript,
+  loadCatalog,
+  removeScriptAt,
+  replaceScriptAt,
+  saveCatalog,
+  scriptFromAdd,
+  scriptFromEdit,
+  type Script,
+} from "./catalog.ts";
 import {
   catalogPath,
   herdrBin,
-  launchInNewPane,
+  launchInNewTab,
   notify,
   openPickerPane,
   readPluginContext,
 } from "./herdr.ts";
-import { planLaunch } from "./launch.ts";
-import type { Workspace } from "./match.ts";
-import { filterVisible, renderPicker } from "./picker.ts";
+import { consumeKey, flushPending } from "./keys.ts";
+import { planLaunch, type LaunchPlan } from "./launch.ts";
+import { clonePathForWorkspace, type Workspace } from "./match.ts";
+import { filterVisible, renderAddForm, renderConfirmDelete, renderPicker } from "./picker.ts";
 import { resolvePicker, resolveSlot } from "./resolve.ts";
-import type { VisibleScript } from "./visible.ts";
+import {
+  createSession,
+  handleSessionKey,
+  type Session,
+  type SessionEffect,
+} from "./session.ts";
+
+export type PluginWorkspace = Workspace & { workspaceId: string | null };
 
 async function main(): Promise<void> {
   const entry = process.env.HERDR_PLUGIN_ENTRYPOINT_ID;
@@ -28,40 +45,34 @@ async function main(): Promise<void> {
   }
   const slotMatch = /^run-([1-9])$/.exec(action);
   if (slotMatch) {
-    runSlot(Number(slotMatch[1]));
+    process.exitCode = runSlot(Number(slotMatch[1]));
     return;
   }
   await runPicker();
 }
 
-function workspaceFromEnv(): Workspace & { paneId: string | null } {
+function workspaceFromEnv(): PluginWorkspace {
   const context = readPluginContext();
   return {
     cwd: context.workspaceCwd ?? "",
     home: process.env.HOME ?? "",
-    paneId: context.focusedPaneId,
+    workspaceId: context.workspaceId,
   };
 }
 
-function runSlot(slot: number): void {
+function runSlot(slot: number): number {
   const workspace = workspaceFromEnv();
   if (!workspace.cwd) {
-    notify("Terminal Scripts", "No active workspace.");
-    process.exitCode = 1;
-    return;
+    report("No active workspace.");
+    return 1;
   }
   const catalog = loadCatalog(catalogPath());
   const result = resolveSlot(catalog, workspace, slot, { herdrBin: herdrBin() });
   if (result.status === "notify") {
-    notify(result.title, result.body);
-    return;
+    report(result.body);
+    return 0;
   }
-  try {
-    launchInNewPane(result.plan, workspace.paneId);
-  } catch (error) {
-    notify("Terminal Scripts", error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  }
+  return launchPlan(result.plan, workspace.workspaceId);
 }
 
 async function runPicker(): Promise<void> {
@@ -80,82 +91,147 @@ async function runPicker(): Promise<void> {
     return;
   }
 
-  if (view.status === "message") {
-    await showMessage(view.title, view.body);
-    return;
+  const outcome = await withRawMode(() => interactivePicker(workspace));
+  if (outcome.type === "launch") {
+    process.exit(launchPlan(planLaunch(outcome.script, workspace, { herdrBin: herdrBin() }), workspace.workspaceId));
   }
-
-  await pickAndLaunch(view.visible, workspace.paneId);
+  process.exit(0);
 }
 
-async function showMessage(title: string, body: string): Promise<void> {
-  await withRawMode(() => {
-    draw(renderPicker({ title, body, query: "", selected: 0 }));
-    return waitForExitKey();
-  });
-}
+async function interactivePicker(
+  workspace: PluginWorkspace,
+): Promise<{ type: "quit" } | { type: "launch"; script: Script }> {
+  const clonePath = workspace.cwd ? clonePathForWorkspace(workspace.cwd) : "";
+  let session = loadSession(workspace);
 
-async function pickAndLaunch(allVisible: VisibleScript[], paneId: string | null): Promise<void> {
-  let query = "";
-  let selected = 0;
-
-  const chosen = await withRawMode(async () => {
-    while (true) {
-      const visible = filterVisible(allVisible, query);
-      if (selected >= visible.length) {
-        selected = Math.max(0, visible.length - 1);
-      }
-      draw(
-        renderPicker({
-          title: "Terminal Scripts",
-          visible,
-          query,
-          selected,
-        }),
-      );
+  while (true) {
+    if (session === null) {
+      const catalog = loadCatalog(catalogPath());
+      const view = resolvePicker(catalog, workspace);
+      draw(renderPicker({ title: view.title, body: view.status === "message" ? view.body : "", query: "", selected: 0 }));
       const key = await readKey();
       if (key === "escape" || key === "ctrl-c") {
-        return null;
+        return { type: "quit" };
       }
-      if (key === "enter") {
-        return visible[selected] ?? null;
-      }
-      if (key === "up") {
-        selected = Math.max(0, selected - 1);
-        continue;
-      }
-      if (key === "down") {
-        selected = Math.min(visible.length - 1, selected + 1);
-        continue;
-      }
-      if (/^[1-9]$/.test(key)) {
-        return visible[Number(key) - 1] ?? null;
-      }
-      if (key === "backspace") {
-        query = query.slice(0, -1);
-        selected = 0;
-        continue;
-      }
-      if (key.length === 1 && !key.startsWith("\u001b")) {
-        query += key;
-        selected = 0;
-      }
+      continue;
     }
-  });
 
-  if (!chosen) {
+    drawSession(session, clonePath);
+    const key = await readKey();
+    const next = handleSessionKey(session, key, { clonePath: clonePath || workspace.cwd });
+    session = next.session;
+    const result = applyEffect(next.effect, workspace);
+    if (result.type === "quit" || result.type === "launch") {
+      return result;
+    }
+    if (result.type === "reload") {
+      session = loadSession(workspace) ?? session;
+    }
+  }
+}
+
+function loadSession(workspace: PluginWorkspace): Session | null {
+  const catalog = loadCatalog(catalogPath());
+  const view = resolvePicker(catalog, workspace);
+  if (view.status === "message") {
+    return null;
+  }
+  return createSession(view.visible, Boolean(workspace.cwd));
+}
+
+function drawSession(session: Session, clonePath: string): void {
+  if (session.mode === "confirm-delete" && session.pendingDelete) {
+    draw(
+      renderConfirmDelete({
+        name: session.pendingDelete.name,
+        disambiguator: session.pendingDelete.extra || undefined,
+      }),
+    );
     return;
   }
-  const workspace = workspaceFromEnv();
-  if (!workspace.cwd) {
-    notify("Terminal Scripts", "No active workspace.");
+  if (session.mode !== "list" && session.mode !== "confirm-delete") {
+    draw(
+      renderAddForm({
+        intent: session.editingIndex === null ? "add" : "edit",
+        step: session.mode,
+        name: session.draft.name,
+        run: session.draft.run,
+        cwd: session.draft.cwd,
+        scope: session.draft.scope,
+        clonePath,
+      }),
+    );
     return;
   }
+  const visible = filterVisible(session.visible, session.query);
+  const selected = Math.min(session.selected, visible.length);
+  draw(
+    renderPicker({
+      title: "Terminal Scripts",
+      visible,
+      query: session.query,
+      selected,
+    }),
+  );
+}
+
+function applyEffect(
+  effect: SessionEffect,
+  workspace: PluginWorkspace,
+): { type: "none" } | { type: "quit" } | { type: "launch"; script: Script } | { type: "reload" } {
+  if (effect.type === "none") {
+    return { type: "none" };
+  }
+  if (effect.type === "quit") {
+    return { type: "quit" };
+  }
+  if (effect.type === "launch") {
+    return { type: "launch", script: effect.script };
+  }
+  const path = catalogPath();
+  const live = loadCatalog(path);
+  if (live.status === "invalid") {
+    report(`Catalog is invalid: ${live.message}`);
+    return { type: "none" };
+  }
+  const existing = live.status === "ok" ? live.scripts : [];
+  if (effect.type === "persist-add") {
+    saveCatalog(path, [...existing, scriptFromAdd(effect.draft)]);
+    return { type: "reload" };
+  }
+  if (effect.type === "persist-edit") {
+    const index = indexOfScript(existing, effect.original, effect.index);
+    if (index < 0) {
+      report("Catalog changed. The Script was not saved.");
+      return { type: "reload" };
+    }
+    saveCatalog(path, replaceScriptAt(existing, index, scriptFromEdit(existing[index] ?? scriptFromAdd(effect.draft), effect.draft)));
+    return { type: "reload" };
+  }
+  const index = indexOfScript(existing, effect.original, effect.index);
+  if (index < 0) {
+    report("Catalog changed. The Script was not deleted.");
+    return { type: "reload" };
+  }
+  saveCatalog(path, removeScriptAt(existing, index));
+  return { type: "reload" };
+}
+
+function launchPlan(plan: LaunchPlan, workspaceId: string | null): number {
   try {
-    launchInNewPane(planLaunch(chosen, workspace, { herdrBin: herdrBin() }), paneId);
+    launchInNewTab(plan, workspaceId);
+    return 0;
   } catch (error) {
-    notify("Terminal Scripts", error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
+    report(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+function report(body: string): void {
+  try {
+    notify("Terminal Scripts", body);
+  } catch {
+    process.stderr.write(`${body}\n`);
   }
 }
 
@@ -170,51 +246,55 @@ async function withRawMode<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } finally {
+    stdinFd.pause();
+    stdinFd.removeAllListeners("data");
     stdinFd.setRawMode(false);
     process.stdout.write("\u001b[?25h");
   }
 }
 
-function waitForExitKey(): Promise<void> {
-  return new Promise((resolve) => {
-    const onData = () => {
-      stdinFd.off("data", onData);
-      resolve();
-    };
-    stdinFd.on("data", onData);
-  });
-}
-
 function readKey(): Promise<string> {
   return new Promise((resolve) => {
-    const onData = (chunk: string) => {
+    let buffer = "";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (key: string) => {
       stdinFd.off("data", onData);
-      resolve(decodeKey(chunk));
+      if (timer) {
+        clearTimeout(timer);
+      }
+      resolve(key);
+    };
+    const pump = () => {
+      const { key, rest, pending } = consumeKey(buffer);
+      buffer = rest;
+      if (key) {
+        finish(key);
+        return;
+      }
+      if (pending) {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        timer = setTimeout(() => {
+          const flushed = flushPending(buffer);
+          buffer = flushed.rest;
+          if (flushed.key) {
+            finish(flushed.key);
+          }
+        }, 40);
+      }
+    };
+    const onData = (chunk: string) => {
+      buffer += chunk;
+      pump();
     };
     stdinFd.on("data", onData);
   });
 }
 
-function decodeKey(chunk: string): string {
-  if (chunk === "\u0003") {
-    return "ctrl-c";
-  }
-  if (chunk === "\u001b" || chunk === "\u001b\u001b") {
-    return "escape";
-  }
-  if (chunk === "\r" || chunk === "\n") {
-    return "enter";
-  }
-  if (chunk === "\u007f" || chunk === "\b") {
-    return "backspace";
-  }
-  if (chunk === "\u001b[A" || chunk === "\u0010") {
-    return "up";
-  }
-  if (chunk === "\u001b[B" || chunk === "\u000e") {
-    return "down";
-  }
-  return chunk;
+try {
+  await main();
+} catch (error) {
+  report(error instanceof Error ? error.message : String(error));
+  process.exit(1);
 }
-
-await main();

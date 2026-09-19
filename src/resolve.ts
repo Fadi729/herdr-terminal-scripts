@@ -14,14 +14,6 @@ export type SlotResult =
 const TITLE = "Terminal Scripts";
 
 export function resolvePicker(catalog: CatalogResult, workspace: Workspace): PickerView {
-  if (catalog.status === "missing") {
-    return {
-      status: "message",
-      title: TITLE,
-      body: `No Scripts yet.\nCreate ${catalog.path}`,
-      path: catalog.path,
-    };
-  }
   if (catalog.status === "invalid") {
     return {
       status: "message",
@@ -30,16 +22,9 @@ export function resolvePicker(catalog: CatalogResult, workspace: Workspace): Pic
       path: catalog.path,
     };
   }
-  const visible = listVisible(catalog.scripts, workspace);
-  if (visible.length === 0) {
-    return {
-      status: "message",
-      title: TITLE,
-      body: "No Scripts for this workspace.",
-      path: "",
-    };
-  }
-  return { status: "list", title: TITLE, visible, path: "" };
+  const scripts = catalog.status === "ok" ? catalog.scripts : [];
+  const visible = listVisible(scripts, workspace);
+  return { status: "list", title: TITLE, visible, path: catalog.path };
 }
 
 export function resolveSlot(

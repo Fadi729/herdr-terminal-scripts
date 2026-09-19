@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 export type Kind = "shell" | "exec" | "herdr";
 
@@ -13,7 +14,7 @@ export type Script = {
 };
 
 export type CatalogResult =
-  | { status: "ok"; scripts: Script[] }
+  | { status: "ok"; path: string; scripts: Script[] }
   | { status: "missing"; path: string }
   | { status: "invalid"; path: string; message: string };
 
@@ -47,7 +48,110 @@ export function loadCatalog(path: string): CatalogResult {
   if (typeof scripts === "string") {
     return { status: "invalid", path, message: scripts };
   }
-  return { status: "ok", scripts };
+  return { status: "ok", path, scripts };
+}
+
+export function saveCatalog(path: string, scripts: Script[]): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const body = {
+    scripts: scripts.map((script) => {
+      const record: Record<string, unknown> = {
+        name: script.name,
+        kind: script.kind,
+        run: script.run,
+      };
+      if (script.when && script.when.length > 0) {
+        record.when = script.when;
+      }
+      if (script.cwd) {
+        record.cwd = script.cwd;
+      }
+      return record;
+    }),
+  };
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(body, null, 2)}\n`);
+  renameSync(tmp, path);
+}
+
+export function scriptFromAdd(input: {
+  name: string;
+  run: string;
+  scope: "global" | "workspace";
+  clonePath: string;
+  cwd: string;
+}): Script {
+  const script: Script = {
+    name: input.name.trim(),
+    kind: "shell",
+    run: input.run.trim(),
+  };
+  applyCwd(script, input.cwd);
+  if (input.scope === "workspace") {
+    script.when = [{ path: input.clonePath }];
+  }
+  return script;
+}
+
+export function scriptFromEdit(
+  existing: Script,
+  input: {
+    name: string;
+    run: string;
+    scope: "global" | "workspace";
+    clonePath: string;
+    cwd: string;
+  },
+): Script {
+  const script: Script = {
+    name: input.name.trim(),
+    kind: existing.kind,
+    run: typeof existing.run === "string" ? input.run.trim() : existing.run,
+  };
+  applyCwd(script, input.cwd);
+  if (input.scope === "workspace") {
+    script.when = [{ path: input.clonePath }];
+  }
+  return script;
+}
+
+function applyCwd(script: Script, cwd: string): void {
+  const trimmed = cwd.trim();
+  if (trimmed) {
+    script.cwd = trimmed;
+  }
+}
+
+export function replaceScriptAt(scripts: Script[], index: number, next: Script): Script[] {
+  if (index < 0 || index >= scripts.length) {
+    return scripts;
+  }
+  return scripts.map((script, i) => (i === index ? next : script));
+}
+
+export function removeScriptAt(scripts: Script[], index: number): Script[] {
+  if (index < 0 || index >= scripts.length) {
+    return scripts;
+  }
+  return scripts.filter((_, i) => i !== index);
+}
+
+export function scriptsEqual(left: Script, right: Script): boolean {
+  return (
+    left.name === right.name &&
+    left.kind === right.kind &&
+    left.cwd === right.cwd &&
+    JSON.stringify(left.run) === JSON.stringify(right.run) &&
+    JSON.stringify(left.when ?? []) === JSON.stringify(right.when ?? [])
+  );
+}
+
+export function indexOfScript(scripts: Script[], target: Script, preferred = -1): number {
+  const atPreferred = scripts[preferred];
+  if (atPreferred && scriptsEqual(atPreferred, target)) {
+    return preferred;
+  }
+  return scripts.findIndex((script) => scriptsEqual(script, target));
 }
 
 function isNotFound(error: unknown): boolean {

@@ -8,6 +8,10 @@ export type LaunchPlan = {
   argv: string[];
 };
 
+export function posixSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 export function planLaunch(
   script: Script,
   workspace: Workspace,
@@ -16,7 +20,7 @@ export function planLaunch(
   return {
     cwd: resolveCwd(script.cwd, workspace.cwd),
     title: script.name,
-    argv: argvFor(script, options),
+    argv: [commandLine(argvFor(script, options))],
   };
 }
 
@@ -33,10 +37,14 @@ function argvFor(script: Script, options: { herdrBin: string; shell?: string }):
   }
   if (script.kind === "shell") {
     const shell = options.shell ?? process.env.SHELL ?? "/bin/sh";
-    return [`${shell} -lc ${JSON.stringify(script.run)}`];
+    return [shell, "-lc", script.run as string];
   }
   if (Array.isArray(script.run)) {
     return script.run;
   }
   return [script.run];
+}
+
+function commandLine(parts: string[]): string {
+  return parts.map(posixSingleQuote).join(" ");
 }

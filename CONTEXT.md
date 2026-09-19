@@ -13,7 +13,7 @@ How a Script is executed: shell (a snippet run by the user's shell), exec (a pat
 _Avoid_: Type, command type
 
 **Catalog**:
-The single user-owned JSON file of Scripts, stored outside any project repository. The plugin reads it and decides which Scripts are visible.
+The single user-owned JSON file of Scripts, stored outside any project repository. The plugin reads it and writes it when a Script is added, edited, or deleted from the Popup.
 _Avoid_: Config, settings, registry
 
 **Global Script**:
@@ -37,5 +37,7 @@ The 1-based position of a Visible Script in the Popup list. Scoped matches come 
 _Avoid_: Hotkey, shortcut, index (those are how you press it, not what it is)
 
 **Popup**:
-The session-modal Herdr pane used to pick a Visible Script by search. When two Visible Scripts share a Name, the list also shows the Matcher, or that the Script is Global.
+The session-modal Herdr pane used to pick a Visible Script by search, or to add, edit, or delete Scripts in the Catalog. When two Visible Scripts share a Name, the list also shows the Matcher, or that the Script is Global.
 _Avoid_: Popscreen, palette, modal, scripts bar
+
+Herdr launches `node dist/main.js`. `plugin install` runs `npm ci` then `npm run build`. `plugin link` does not; run `npm run build` after TypeScript changes.

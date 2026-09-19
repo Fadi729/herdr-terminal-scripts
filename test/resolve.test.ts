@@ -5,12 +5,12 @@ import { resolvePicker, resolveSlot } from "../src/resolve.ts";
 const workspace = { cwd: "/Users/fadi/Projects/app", home: "/Users/fadi" };
 const catalogPath = "/Users/fadi/.config/herdr/plugins/terminal-scripts/scripts.json";
 
-test("a missing Catalog tells the Popup the expected path and Slots notify", () => {
+test("a missing Catalog opens an empty Popup so a Script can be added", () => {
   const missing = { status: "missing" as const, path: catalogPath };
   const picker = resolvePicker(missing, workspace);
-  assert.equal(picker.status, "message");
-  assert.match(picker.body, /scripts\.json/);
-  assert.match(picker.body, /No Scripts yet/);
+  assert.equal(picker.status, "list");
+  assert.deepEqual(picker.visible, []);
+  assert.equal(picker.path, catalogPath);
 
   const slot = resolveSlot(missing, workspace, 1, { herdrBin: "/opt/herdr" });
   assert.equal(slot.status, "notify");
@@ -33,7 +33,7 @@ test("an invalid Catalog shows the parse error and Slots notify", () => {
 
 test("an empty Slot notifies instead of launching", () => {
   const slot = resolveSlot(
-    { status: "ok", scripts: [] },
+    { status: "ok", path: catalogPath, scripts: [] },
     workspace,
     1,
     { herdrBin: "/opt/herdr" },
@@ -46,6 +46,7 @@ test("a filled Slot returns a launch plan", () => {
   const slot = resolveSlot(
     {
       status: "ok",
+      path: catalogPath,
       scripts: [{ name: "Logs", kind: "herdr", run: ["plugin", "log", "list"] }],
     },
     workspace,
