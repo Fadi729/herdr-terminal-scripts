@@ -9,61 +9,61 @@ platforms = ["linux", "macos"]
 id = "picker"
 title = "Open Script popup"
 contexts = ["workspace"]
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]
 
 [[actions]]
 id = "run-1"
 title = "Run Script slot 1"
 contexts = ["workspace"]
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]
 
 [[actions]]
 id = "run-2"
 title = "Run Script slot 2"
 contexts = ["workspace"]
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]
 
 [[actions]]
 id = "run-3"
 title = "Run Script slot 3"
 contexts = ["workspace"]
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]
 
 [[actions]]
 id = "run-4"
 title = "Run Script slot 4"
 contexts = ["workspace"]
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]
 
 [[actions]]
 id = "run-5"
 title = "Run Script slot 5"
 contexts = ["workspace"]
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]
 
 [[actions]]
 id = "run-6"
 title = "Run Script slot 6"
 contexts = ["workspace"]
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]
 
 [[actions]]
 id = "run-7"
 title = "Run Script slot 7"
 contexts = ["workspace"]
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]
 
 [[actions]]
 id = "run-8"
 title = "Run Script slot 8"
 contexts = ["workspace"]
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]
 
 [[actions]]
 id = "run-9"
 title = "Run Script slot 9"
 contexts = ["workspace"]
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]
 
 [[panes]]
 id = "picker"
@@ -71,4 +71,4 @@ title = "Terminal Scripts"
 placement = "popup"
 width = "70%"
 height = 18
-command = ["node", "src/main.ts"]
+command = ["node", "--experimental-strip-types", "src/main.ts"]

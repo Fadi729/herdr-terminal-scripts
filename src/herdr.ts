@@ -4,6 +4,7 @@ import type { LaunchPlan } from "./launch.ts";
 
 export type PluginContext = {
   workspaceCwd: string | null;
+  workspaceId: string | null;
   focusedPaneId: string | null;
 };
 
@@ -18,19 +19,29 @@ export function catalogPath(): string {
 export function readPluginContext(): PluginContext {
   const raw = process.env.HERDR_PLUGIN_CONTEXT_JSON;
   if (!raw) {
-    return { workspaceCwd: null, focusedPaneId: null };
+    return {
+      workspaceCwd: null,
+      workspaceId: process.env.HERDR_WORKSPACE_ID ?? null,
+      focusedPaneId: null,
+    };
   }
   try {
     const parsed = JSON.parse(raw) as {
       workspace_cwd?: string | null;
+      workspace_id?: string | null;
       focused_pane_id?: string | null;
     };
     return {
       workspaceCwd: parsed.workspace_cwd ?? null,
+      workspaceId: parsed.workspace_id ?? process.env.HERDR_WORKSPACE_ID ?? null,
       focusedPaneId: parsed.focused_pane_id ?? null,
     };
   } catch {
-    return { workspaceCwd: null, focusedPaneId: null };
+    return {
+      workspaceCwd: null,
+      workspaceId: process.env.HERDR_WORKSPACE_ID ?? null,
+      focusedPaneId: null,
+    };
   }
 }
 
@@ -51,24 +62,54 @@ export function openPickerPane(): void {
   ]);
 }
 
-export function launchInNewPane(plan: LaunchPlan, focusedPaneId: string | null): void {
-  const splitArgs = ["pane", "split", "--direction", "down", "--cwd", plan.cwd, "--focus"];
-  if (focusedPaneId) {
-    splitArgs.push("--pane", focusedPaneId);
+export function launchInNewTab(plan: LaunchPlan, workspaceId: string | null): void {
+  const createArgs = ["tab", "create", "--cwd", plan.cwd, "--label", plan.title, "--focus"];
+  if (workspaceId) {
+    createArgs.push("--workspace", workspaceId);
   }
-  const split = runHerdr(splitArgs);
-  const paneId = paneIdFrom(split);
+  const created = runHerdr(createArgs);
+  const paneId = paneIdFromLaunch(created);
   if (!paneId) {
-    throw new Error("Herdr did not return a pane id for the split");
+    throw new Error("Herdr did not return a pane id for the new tab");
   }
-  runHerdr(["pane", "rename", paneId, plan.title]);
   runHerdr(["pane", "run", paneId, ...plan.argv]);
+}
+
+export function paneIdFromLaunch(payload: unknown): string | null {
+  const result = unwrapResult(payload);
+  if (!result) {
+    return null;
+  }
+  const root = asRecord(result.root_pane);
+  const pane = asRecord(result.pane) ?? root;
+  const id = pane?.pane_id;
+  return typeof id === "string" ? id : null;
+}
+
+function unwrapResult(payload: unknown): Record<string, unknown> | null {
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  const result = record.result;
+  if (typeof result === "object" && result !== null) {
+    return result as Record<string, unknown>;
+  }
+  return record;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "object" && value !== null) {
+    return value as Record<string, unknown>;
+  }
+  return null;
 }
 
 function runHerdr(args: string[]): unknown {
   const result = spawnSync(herdrBin(), args, {
     encoding: "utf8",
     env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.status !== 0) {
     const detail = (result.stderr || result.stdout || "").trim();
@@ -85,18 +126,3 @@ function runHerdr(args: string[]): unknown {
   }
 }
 
-function paneIdFrom(payload: unknown): string | null {
-  if (typeof payload !== "object" || payload === null) {
-    return null;
-  }
-  const result = "result" in payload ? (payload as { result?: unknown }).result : payload;
-  if (typeof result !== "object" || result === null) {
-    return null;
-  }
-  const pane = "pane" in result ? (result as { pane?: unknown }).pane : result;
-  if (typeof pane !== "object" || pane === null) {
-    return null;
-  }
-  const id = "pane_id" in pane ? (pane as { pane_id?: unknown }).pane_id : undefined;
-  return typeof id === "string" ? id : null;
-}

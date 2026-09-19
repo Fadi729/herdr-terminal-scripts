@@ -2,24 +2,25 @@ import type { Script } from "./catalog.ts";
 import { expandMatcherPath, matcherMatches, type Workspace } from "./match.ts";
 
 export type VisibleScript = Script & {
+  catalogIndex: number;
   disambiguator?: string;
 };
 
 export function listVisible(scripts: Script[], workspace: Workspace): VisibleScript[] {
-  const scoped: Script[] = [];
-  const global: Script[] = [];
-  for (const script of scripts) {
+  const scoped: VisibleScript[] = [];
+  const global: VisibleScript[] = [];
+  for (const [catalogIndex, script] of scripts.entries()) {
+    const visible: VisibleScript = { ...script, catalogIndex };
     if (!script.when || script.when.length === 0) {
-      global.push(script);
+      global.push(visible);
       continue;
     }
     if (matcherMatches(script.when, workspace)) {
-      scoped.push(script);
+      scoped.push(visible);
     }
   }
 
-  const visible: VisibleScript[] = [...scoped, ...global];
-  return withDisambiguators(visible, workspace);
+  return withDisambiguators([...scoped, ...global], workspace);
 }
 
 export function scriptInSlot(visible: VisibleScript[], slot: number): VisibleScript | undefined {

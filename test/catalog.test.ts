@@ -47,6 +47,7 @@ test("a valid Catalog loads Global and Scoped Scripts", () => {
   const result = loadCatalog(path);
   assert.deepEqual(result, {
     status: "ok",
+    path,
     scripts: [
       {
         name: "Logs",
