@@ -45,7 +45,7 @@ You can also bind a key. See [Hotkeys](#hotkeys).
 | Esc              | Close                                                                |
 
 
-A run opens a new tab named after the Script and runs there. If cwd is empty, that tab uses the workspace cwd.
+A run opens a new tab named after the Script and runs there. `cwd` is passed to `tab create --cwd`, so the tab’s shell starts in that directory; the Script is then typed into that shell. If cwd is empty, the tab uses the workspace cwd.
 
 ### Add a Script
 
@@ -131,7 +131,7 @@ The popup creates and updates this file. You can also edit it by hand for `exec`
 | Field  | Meaning                                                                                                    |
 | ------ | ---------------------------------------------------------------------------------------------------------- |
 | `name` | Label in the popup. Names may repeat.                                                                      |
-| `kind` | `shell` (snippet via `$SHELL -lc`), `exec` (path or argv), or `herdr` (argv appended to the Herdr binary). |
+| `kind` | `shell` (snippet typed into the new tab’s shell), `exec` (path or argv), or `herdr` (argv appended to the Herdr binary). |
 | `run`  | String for `shell`, string or argv for `exec`, argv for `herdr`.                                           |
 | `when` | Omit for Global. Otherwise `{ "path": "…" }` for this clone or folder. `~` expands to `$HOME`.             |
 | `cwd`  | Optional. Relative paths resolve against the workspace cwd. Absolute paths are used as written.            |

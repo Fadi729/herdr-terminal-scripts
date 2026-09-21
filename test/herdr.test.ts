@@ -17,7 +17,7 @@ test("a new tab launch reads the root pane id", () => {
   assert.equal(id, "w1:t2:p1");
 });
 
-test("launchInNewTab creates a tab then runs the cd-then-command line in that pane", () => {
+test("launchInNewTab creates a tab at cwd, waits for the shell, then runs the snippet there", () => {
   const dir = mkdtempSync(join(tmpdir(), "herdr-fake-"));
   const bin = join(dir, "herdr");
   const log = join(dir, "argv.jsonl");
@@ -42,7 +42,7 @@ if (process.argv[2] === "tab" && process.argv[3] === "create") {
       {
         cwd: "/tmp/turbo/apps/web",
         title: "Web hello",
-        argv: ["cd '/tmp/turbo/apps/web' && '/bin/bash' '-lc' 'npm run hello'"],
+        argv: ["npm run hello"],
       },
       "w1",
     );
@@ -71,9 +71,14 @@ if (process.argv[2] === "tab" && process.argv[3] === "create") {
   ]);
   assert.deepEqual(calls[1], [
     "pane",
-    "run",
+    "wait-output",
     "w1:t2:p1",
-    "cd '/tmp/turbo/apps/web' && '/bin/bash' '-lc' 'npm run hello'",
+    "--timeout",
+    "5000",
+    "--regex",
+    ".",
+    "--source",
+    "recent-unwrapped",
   ]);
-  assert.match(calls[1]?.[3] ?? "", /^cd .* && /);
+  assert.deepEqual(calls[2], ["pane", "run", "w1:t2:p1", "npm run hello"]);
 });
