@@ -17,11 +17,16 @@ export function planLaunch(
   workspace: Workspace,
   options: { herdrBin: string; shell?: string },
 ): LaunchPlan {
+  const cwd = resolveCwd(script.cwd, workspace.cwd);
   return {
-    cwd: resolveCwd(script.cwd, workspace.cwd),
+    cwd,
     title: script.name,
-    argv: [commandLine(argvFor(script, options))],
+    argv: [cdThen(cwd, commandLine(argvFor(script, options)))],
   };
+}
+
+export function cdThen(cwd: string, command: string): string {
+  return `cd ${posixSingleQuote(cwd)} && ${command}`;
 }
 
 function resolveCwd(scriptCwd: string | undefined, workspaceCwd: string): string {
