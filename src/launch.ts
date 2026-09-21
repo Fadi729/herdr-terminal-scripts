@@ -20,7 +20,7 @@ export function planLaunch(
   return {
     cwd: resolveCwd(script.cwd, workspace.cwd),
     title: script.name,
-    argv: [commandLine(argvFor(script, options))],
+    argv: [commandForPane(script, options)],
   };
 }
 
@@ -31,13 +31,16 @@ function resolveCwd(scriptCwd: string | undefined, workspaceCwd: string): string
   return isAbsolute(scriptCwd) ? scriptCwd : join(workspaceCwd, scriptCwd);
 }
 
+function commandForPane(script: Script, options: { herdrBin: string; shell?: string }): string {
+  if (script.kind === "shell") {
+    return script.run as string;
+  }
+  return commandLine(argvFor(script, options));
+}
+
 function argvFor(script: Script, options: { herdrBin: string; shell?: string }): string[] {
   if (script.kind === "herdr") {
     return [options.herdrBin, ...(script.run as string[])];
-  }
-  if (script.kind === "shell") {
-    const shell = options.shell ?? process.env.SHELL ?? "/bin/sh";
-    return [shell, "-lc", script.run as string];
   }
   if (Array.isArray(script.run)) {
     return script.run;

@@ -72,7 +72,26 @@ export function launchInNewTab(plan: LaunchPlan, workspaceId: string | null): vo
   if (!paneId) {
     throw new Error("Herdr did not return a pane id for the new tab");
   }
+  waitForPaneReady(paneId);
   runHerdr(["pane", "run", paneId, ...plan.argv]);
+}
+
+function waitForPaneReady(paneId: string): void {
+  try {
+    runHerdr([
+      "pane",
+      "wait-output",
+      paneId,
+      "--timeout",
+      "5000",
+      "--regex",
+      ".",
+      "--source",
+      "recent-unwrapped",
+    ]);
+  } catch {
+    // `tab create --cwd` already spawned the shell in plan.cwd. Run even if the prompt is slow.
+  }
 }
 
 export function paneIdFromLaunch(payload: unknown): string | null {
